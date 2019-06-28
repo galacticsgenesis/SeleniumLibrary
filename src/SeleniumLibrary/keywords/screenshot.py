@@ -17,9 +17,11 @@
 import os
 
 from robot.utils import get_link_path
-
+import threading
+import time
 from SeleniumLibrary.base import LibraryComponent, keyword
 from SeleniumLibrary.utils import is_noney
+import cv2
 
 
 class ScreenshotKeywords(LibraryComponent):
@@ -93,6 +95,59 @@ class ScreenshotKeywords(LibraryComponent):
         self._embed_to_log(path, 800)
         return path
 
+    @keyword("Screen Record Start")
+    def capture_screenshots(self, filename='screenshots-{index}.png'):
+        global screen_video_queue
+        try:
+            isinstance(screen_video_queue, list)
+        except NameError:
+            screen_video_queue = []
+
+        is_recording = True
+        screenshots = []
+        screen_video_queue.append([0, is_recording, screenshots])  # 队列中放一个列表，列表第一位放运行时间，第二位放是否录制开关，第三位放录制文件列表
+        index = len(screen_video_queue) - 1
+        threading.Thread(target=self._loop_capture_screenshots, args=(index, filename)).start()
+        return index
+
+    def _loop_capture_screenshots(self, index, filename):
+        global screen_video_queue
+        start_time = time.time()
+        while screen_video_queue[index][1]:
+            if not self.drivers.current:
+                self.info('Cannot capture screenshots because no browser is open.')
+                time.sleep(1)
+            path = self._get_screenshot_path(filename)
+            self._create_directory(path)
+            if self.driver.save_screenshot(path):
+                screen_video_queue[index][2].append(path)
+            screen_video_queue[index][0] = time.time() - start_time
+
+    @keyword("Screen Record Stop")
+    def stop_recording_and_save_to_mp4(self, index, video_name='video-{index}.mp4'):
+        global screen_video_queue
+        try:
+            isinstance(screen_video_queue, list)
+        except NameError:
+            raise RuntimeError("screen video queue is not init")
+
+        if index is None or int(index) >= len(screen_video_queue):
+            raise RuntimeError("index is null or invalid, please make sure index is correct")
+        index = int(index)
+        screen_video_queue[index][1] = False
+        if screen_video_queue[index][0] != 0 and len(screen_video_queue[index][2]) > 0:
+            fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
+            fps = int(len(screen_video_queue[index][2]) / screen_video_queue[index][0])
+            img = cv2.imread(screen_video_queue[index][2][0])  # 获取第一张图片，动态算出尺寸 size
+            height, width, channels = img.shape
+            size = (width, height)
+            path = self._get_video_path(video_name)
+            videoWriter = cv2.VideoWriter(path, fourcc, fps, size)
+            for i in range(1, len(screen_video_queue[index][2])):
+                frame = cv2.imread(screen_video_queue[index][2][i])
+                videoWriter.write(frame)
+            videoWriter.release()
+
     @keyword
     def capture_element_screenshot(self, locator, filename='selenium-element-screenshot-{index}.png'):
         """Captures screenshot from the element identified by ``locator`` and embeds it into log file.
@@ -127,12 +182,31 @@ class ScreenshotKeywords(LibraryComponent):
     def _get_screenshot_path(self, filename):
         directory = self.ctx.screenshot_root_directory or self.log_dir
         filename = filename.replace('/', os.sep)
-        index = 0
+        global g_screenshots_index
+        try:
+            isinstance(g_screenshots_index, int)
+        except NameError:
+            g_screenshots_index = 0
         while True:
-            index += 1
-            formatted = filename.format(index=index)
+            g_screenshots_index += 1
+            formatted = filename.format(index=g_screenshots_index)
             path = os.path.join(directory, formatted)
             # filename didn't contain {index} or unique path was found
+            if formatted == filename or not os.path.exists(path):
+                return path
+
+    def _get_video_path(self, filename):
+        directory = self.ctx.screenshot_root_directory or self.log_dir
+        filename = filename.replace('/', os.sep)
+        global g_video_index
+        try:
+            isinstance(g_video_index, int)
+        except NameError:
+            g_video_index = 0
+        while True:
+            g_video_index += 1
+            formatted = filename.format(index=g_video_index)
+            path = os.path.join(directory, formatted)
             if formatted == filename or not os.path.exists(path):
                 return path
 

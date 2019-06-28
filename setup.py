@@ -26,7 +26,7 @@ with open(join(CURDIR, 'requirements.txt')) as f:
     REQUIREMENTS = f.read().splitlines()
 
 setup(
-    name             = 'robotframework-seleniumlibrary',
+    name             = 'robotframework-seleniumlibrary-ext',
     version          = VERSION,
     description      = 'Web testing library for Robot Framework',
     long_description = DESCRIPTION,
