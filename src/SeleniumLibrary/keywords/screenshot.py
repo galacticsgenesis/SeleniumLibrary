@@ -102,11 +102,10 @@ class ScreenshotKeywords(LibraryComponent):
             isinstance(screen_video_queue, list)
         except NameError:
             screen_video_queue = []
-
-        is_recording = True
         screenshots = []
-        screen_video_queue.append([0, is_recording, screenshots])  # 队列中放一个列表，列表第一位放运行时间，第二位放是否录制开关，第三位放录制文件列表
+        screen_video_queue.append([0, True, screenshots, False])  # 队列中放一个列表，列表第一位放运行时间，第二位放是否录制开关，第三位放录制文件列表
         index = len(screen_video_queue) - 1
+        self.info('start screen record with index : {}'.format(index))
         threading.Thread(target=self._loop_capture_screenshots, args=(index, filename)).start()
         return index
 
@@ -114,14 +113,16 @@ class ScreenshotKeywords(LibraryComponent):
         global screen_video_queue
         start_time = time.time()
         while screen_video_queue[index][1]:
-            if not self.drivers.current:
-                self.info('Cannot capture screenshots because no browser is open.')
+            try:
+                path = self._get_video_image_path(filename)
+                self._create_directory(path)
+                if self.driver.save_screenshot(path):
+                    screen_video_queue[index][2].append(path)
+                screen_video_queue[index][0] = time.time() - start_time
+            except:
+                self.info('Cannot capture screenshots')
                 time.sleep(1)
-            path = self._get_screenshot_path(filename)
-            self._create_directory(path)
-            if self.driver.save_screenshot(path):
-                screen_video_queue[index][2].append(path)
-            screen_video_queue[index][0] = time.time() - start_time
+        screen_video_queue[index][3] = True
 
     @keyword("Screen Record Stop")
     def stop_recording_and_save_to_mp4(self, index, video_name='video-{index}.mp4'):
@@ -134,10 +135,23 @@ class ScreenshotKeywords(LibraryComponent):
         if index is None or int(index) >= len(screen_video_queue):
             raise RuntimeError("index is null or invalid, please make sure index is correct")
         index = int(index)
+        self.info('stop screen record and save with index : {}'.format(index))
         screen_video_queue[index][1] = False
+        wait_finishing_record_count = 0
+        while not screen_video_queue[index][3]:
+            time.sleep(1)
+            wait_finishing_record_count += 1
+            if wait_finishing_record_count == 5:
+                self.info('screenshots for index {} cannot stop'.format(index))
+                return
+        self.info('wait {} seconds util finishing record'.format(wait_finishing_record_count))
+        self.info('video record time {}, length of picture list {}'.format(screen_video_queue[index][0],
+                                                                           len(screen_video_queue[index][2])))
         if screen_video_queue[index][0] != 0 and len(screen_video_queue[index][2]) > 0:
             fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
             fps = int(len(screen_video_queue[index][2]) / screen_video_queue[index][0])
+            if fps < 1 or len(screen_video_queue[index][2]) < 5:
+                fps = 1
             img = cv2.imread(screen_video_queue[index][2][0])  # 获取第一张图片，动态算出尺寸 size
             height, width, channels = img.shape
             size = (width, height)
@@ -147,6 +161,7 @@ class ScreenshotKeywords(LibraryComponent):
                 frame = cv2.imread(screen_video_queue[index][2][i])
                 videoWriter.write(frame)
             videoWriter.release()
+            self.info('write file done for index : {}'.format(index))
 
     @keyword
     def capture_element_screenshot(self, locator, filename='selenium-element-screenshot-{index}.png'):
@@ -180,6 +195,18 @@ class ScreenshotKeywords(LibraryComponent):
         return path
 
     def _get_screenshot_path(self, filename):
+        directory = self.ctx.screenshot_root_directory or self.log_dir
+        filename = filename.replace('/', os.sep)
+        index = 0
+        while True:
+            index += 1
+            formatted = filename.format(index=index)
+            path = os.path.join(directory, formatted)
+            # filename didn't contain {index} or unique path was found
+            if formatted == filename or not os.path.exists(path):
+                return path
+
+    def _get_video_image_path(self, filename):
         directory = self.ctx.screenshot_root_directory or self.log_dir
         filename = filename.replace('/', os.sep)
         global g_screenshots_index
